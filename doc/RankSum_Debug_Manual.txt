@@ -1,0 +1,290 @@
+AN0236 Rank-Sum 후보 생성 디버깅 매뉴얼
+========================================
+
+목적
+----
+다음 두 흐름만 확인한다.
+
+1) uniPredL0 / uniPredL1에 (template cost, 원본 merge candidate index)가 저장되는 과정
+2) 정렬된 uni predictor가 Rank-Sum으로 조합되어 genCands에 저장되는 과정
+
+대상 함수
+---------
+source/Lib/CommonLib/InterPrediction.cpp
+InterPrediction::generateMergeCandidates()
+
+주의
+----
+Breakpoint는 해당 줄 실행 직전에 멈춘다. push_back 이후 값을 보려면 해당 줄에서
+Step Over를 실행한 뒤 확인한다. vector의 size보다 큰 인덱스는 Watch하지 않는다.
+
+1. uni predictor 리스트 적재
+----------------------------
+
+L0 저장 지점
+  줄: 17866
+  코드: uniPredL0.push_back(...)
+  실행 후 Watch:
+    uiCost
+    uiMergeCand
+    uniPredL0.size()
+    uniPredL0.back().first
+    uniPredL0.back().second
+
+L1 저장 지점
+  줄: 17871
+  코드: uniPredL1.push_back(...)
+  실행 후 Watch:
+    uiCost
+    uiMergeCand
+    uniPredL1.size()
+    uniPredL1.back().first
+    uniPredL1.back().second
+
+pair의 의미
+  .first  = uni template cost
+  .second = mvpMergeCandCtx에서의 원본 candidate index
+
+저장 완료 후
+  줄: 17875
+  Watch:
+    uniPredL0.size()
+    uniPredL1.size()
+
+정렬 확인
+  줄: 17878 (L0 stable_sort)
+  줄: 17879 (L1 stable_sort)
+  정렬 실행 후 Watch:
+    uniPredL0[0].first
+    uniPredL0[0].second
+    uniPredL0[1].first
+    uniPredL0[1].second
+    uniPredL1[0].first
+    uniPredL1[0].second
+    uniPredL1[1].first
+    uniPredL1[1].second
+
+  주의: size가 1이면 [1]을 확인하지 않는다.
+  정렬 후 .first는 cost 오름차순이어야 한다.
+
+2. Rank-Sum 조합 확인
+----------------------
+
+bi 조합 단계 진입
+  줄: 17905 또는 17906
+  가능하면 조건부 breakpoint:
+    isBi == true
+  Watch:
+    isBi
+    refList
+    first
+    second
+    l0
+    l1
+
+Rank-Sum 대응 확인
+  Watch:
+    uniPredL0[l0].first
+    uniPredL0[l0].second
+    uniPredL1[l1].first
+    uniPredL1[l1].second
+
+  예상 순서:
+    first=0: (l0,l1)=(0,0)
+    first=1: (0,1), (1,0)
+    first=2: (0,2), (1,1), (2,0)
+
+원본 candidate index 및 MV 확인
+  줄: 17922, 17923
+  Watch:
+    l0
+    l1
+    idxL0
+    idxL1
+    refIdx0
+    refIdx1
+    mv0
+    mv1
+
+  검증식:
+    idxL0 == uniPredL0[l0].second
+    idxL1 == uniPredL1[l1].second
+
+3. genCands 저장 확인
+----------------------
+
+후보 slot 초기화
+  줄: 17931
+  Watch:
+    cnt
+    genCands.numValidMergeCand
+    genCands.numCandToTestEnc
+
+MV/refIdx 저장 확인
+  줄: 17935, 17939 실행 후 Watch:
+    genCands.interDirNeighbours[cnt]
+    genCands.mvFieldNeighbours[cnt * 2].mv
+    genCands.mvFieldNeighbours[cnt * 2].refIdx
+    genCands.mvFieldNeighbours[cnt * 2 + 1].mv
+    genCands.mvFieldNeighbours[cnt * 2 + 1].refIdx
+
+  bi 후보 검증:
+    genCands.interDirNeighbours[cnt] == 3
+
+중복 후보 검사
+  줄: 17979
+  Watch:
+    cnt
+    genCands.xCheckSimilarMotion(cnt)
+    genCands.numValidMergeCand
+
+  결과:
+    false = 새 후보로 채택 가능
+    true  = 유사 motion으로 제거
+
+후보 채택 확인
+  줄: 17983
+  Watch:
+    cnt
+    genCands.numValidMergeCand
+    genCands.numCandToTestEnc
+
+  이 줄에 도달한 경우 후보 수가 증가한다.
+
+4. 단계별 최종 개수 확인
+-------------------------
+
+각 addNewPredictor 호출 지점:
+  줄: 17998 (L0)
+  줄: 17999 (L1)
+  줄: 18000 (Bi)
+
+각 호출 전후에 기록:
+  cnt
+  genCands.numValidMergeCand
+  genCands.numCandToTestEnc
+
+전체 generated candidate 생성 완료:
+  줄: 18002
+  Watch:
+    cnt
+    genCands.numValidMergeCand
+    genCands.numCandToTestEnc
+    NUM_MERGE_CANDS
+
+추천 최소 breakpoint 세트
+--------------------------
+  17866  L0 uni cost 저장
+  17871  L1 uni cost 저장
+  17878  L0 정렬
+  17879  L1 정렬
+  17905  Rank-Sum 조합(l0)
+  17906  Rank-Sum 조합(l1)
+  17922  원본 candidate index 매핑
+  17931  generated candidate slot 생성
+  17979  중복 motion 검사
+  17983  후보 채택 및 count 증가
+  18002  최종 generated candidate 개수
+
+단계별 요약
+------------
+
+단계 1: L0 uni predictor 저장
+  Breakpoint: 17866 (push_back 실행 전)
+  실행 후 확인 변수:
+    uiCost, uiMergeCand
+    uniPredL0.size()
+    uniPredL0.back().first
+    uniPredL0.back().second
+  역할:
+    L0 predictor의 template cost와 원본 merge candidate index를
+    uniPredL0에 저장한다.
+
+단계 2: L1 uni predictor 저장
+  Breakpoint: 17871 (push_back 실행 전)
+  실행 후 확인 변수:
+    uiCost, uiMergeCand
+    uniPredL1.size()
+    uniPredL1.back().first
+    uniPredL1.back().second
+  역할:
+    L1 predictor의 template cost와 원본 merge candidate index를
+    uniPredL1에 저장한다.
+
+단계 3: uni predictor 정렬
+  Breakpoint: 17878 (L0), 17879 (L1)
+  정렬 후 확인 변수:
+    uniPredL0[0].first, uniPredL0[0].second
+    uniPredL1[0].first, uniPredL1[0].second
+  역할:
+    uni predictor를 template cost 오름차순으로 정렬한다.
+    인덱스 [0], [1]은 정렬된 rank이며 .second는 원래 candidate index다.
+
+단계 4: Rank-Sum 조합 인덱스 결정
+  Breakpoint: 17905, 17906
+  권장 조건부 breakpoint:
+    isBi == true
+  확인 변수:
+    first, second, l0, l1
+    uniPredL0[l0].first, uniPredL0[l0].second
+    uniPredL1[l1].first, uniPredL1[l1].second
+  역할:
+    l0와 l1 rank를 Rank-Sum diagonal 순서로 결정한다.
+
+단계 5: 원본 candidate의 MV/refIdx 매핑
+  Breakpoint: 17922, 17923
+  확인 변수:
+    idxL0, idxL1
+    refIdx0, refIdx1
+    mv0, mv1
+  역할:
+    정렬된 rank(l0/l1)를 원래 mvpMergeCandCtx candidate index로 변환하고,
+    해당 후보의 실제 MV와 reference index를 읽는다.
+
+단계 6: generated candidate 구성
+  Breakpoint: 17931
+  확인 변수:
+    cnt
+    genCands.interDirNeighbours[cnt]
+    genCands.mvFieldNeighbours[cnt * 2].mv
+    genCands.mvFieldNeighbours[cnt * 2].refIdx
+    genCands.mvFieldNeighbours[cnt * 2 + 1].mv
+    genCands.mvFieldNeighbours[cnt * 2 + 1].refIdx
+  역할:
+    선택된 L0/L1 predictor의 MV/refIdx를 genCands의 현재 slot에 기록한다.
+    bi 후보이면 interDirNeighbours[cnt] == 3이다.
+
+단계 7: 중복 검사 및 채택
+  Breakpoint: 17979 (검사), 17983 (채택)
+  확인 변수:
+    genCands.xCheckSimilarMotion(cnt)
+    cnt
+    genCands.numValidMergeCand
+    genCands.numCandToTestEnc
+  역할:
+    유사 motion 후보를 제거하고, 새 후보만 count를 증가시킨다.
+
+단계 8: 단계별/최종 후보 개수
+  Breakpoint: 17998 (L0), 17999 (L1), 18000 (Bi), 18002 (완료)
+  확인 변수:
+    cnt
+    genCands.numValidMergeCand
+    genCands.numCandToTestEnc
+    NUM_MERGE_CANDS
+  역할:
+    L0/L1/Bi 각 단계가 candidate budget을 얼마나 사용했는지 확인하고,
+    generated candidate 생성이 종료된 뒤 실제 개수를 확인한다.
+
+핵심 Watch 묶음
+----------------
+  uniPredL0.size()
+  uniPredL1.size()
+  uniPredL0[l0].first
+  uniPredL0[l0].second
+  uniPredL1[l1].first
+  uniPredL1[l1].second
+  l0, l1, idxL0, idxL1
+  mv0, mv1, refIdx0, refIdx1
+  cnt
+  genCands.numValidMergeCand
+  genCands.numCandToTestEnc

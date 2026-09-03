@@ -1,0 +1,23 @@
+dec.yuv
+rec.yuv
+str.bin
+/build/
+/bin/
+/lib/
+core
+deploy
+*.sdf
+*.suo
+.vs/
+.vscode/
+*.blg
+*.bbl
+*.pyc
+/out/
+/doc/_minted-software-manual/
+
+# Local build directory
+build-release/
+
+# Windows downloaded-file metadata
+*:Zone.Identifier
